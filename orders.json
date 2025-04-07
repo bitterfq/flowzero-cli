@@ -1,0 +1,63 @@
+[
+  {
+    "order_id": "707e9721-58e2-47f4-9c59-eeffaeeb2aeb",
+    "aoi_name": "ScottRiver",
+    "order_type": "Basemap (Composite)",
+    "start_date": "N/A",
+    "end_date": "N/A",
+    "timestamp": "2025-03-03T12:48:55.318956"
+  },
+  {
+    "order_id": "2545f595-206b-4c37-b415-ee29403d5aa6",
+    "aoi_name": "ScottRiver",
+    "order_type": "Basemap (Composite)",
+    "start_date": "N/A",
+    "end_date": "N/A",
+    "timestamp": "2025-03-03T13:27:07.461457"
+  },
+  {
+    "order_id": "9eb4762c-09b4-449d-875b-5c4755322fed",
+    "aoi_name": "DrySpy_AOI_SalinasRiver",
+    "order_type": "PSScope",
+    "start_date": "2024-01-01",
+    "end_date": "2024-01-20",
+    "num_bands": "four_bands",
+    "timestamp": "2025-03-19T14:35:39.962606"
+  },
+  {
+    "order_id": "52ac5873-d0e4-4b76-bdc3-ac7907f62f3f",
+    "order_type": "Basemap (Composite)",
+    "aoi_name": "SalinasRiver",
+    "mosaic_name": "global_monthly_2024_01_mosaic",
+    "start_date": "N/A",
+    "end_date": "N/A",
+    "timestamp": "2025-03-19T16:04:00.172360"
+  },
+  {
+    "order_id": "9a61b3bc-4604-40ac-ab7b-dc5b49d84862",
+    "aoi_name": "DrySpy_AOI_SantaClaraRiver_central",
+    "order_type": "PSScope",
+    "start_date": "2024-01-01",
+    "end_date": "2024-01-20",
+    "num_bands": "four_bands",
+    "timestamp": "2025-03-24T12:01:03.521018"
+  },
+  {
+    "order_id": "b65f29e4-4eb3-409e-8486-6413c299bb09",
+    "order_type": "Basemap (Composite)",
+    "aoi_name": "SalinasRiver",
+    "mosaic_name": "global_monthly_2025_02_mosaic",
+    "start_date": "N/A",
+    "end_date": "N/A",
+    "timestamp": "2025-03-24T12:49:39.571074"
+  },
+  {
+    "order_id": "b035ae1f-0878-416f-a657-052907478de1",
+    "order_type": "Basemap (Composite)",
+    "aoi_name": "SalinasRiver",
+    "mosaic_name": "global_monthly_2025_01_mosaic",
+    "start_date": "N/A",
+    "end_date": "N/A",
+    "timestamp": "2025-03-24T12:50:49.647037"
+  }
+]
