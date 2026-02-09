@@ -1,0 +1,28 @@
+api:
+  planet_base_url: "https://api.planet.com"
+  min_coverage_pct: 98.0
+  rate_limit_delay: 0.5
+  pagination_delay: 0.5
+  timeout: 60
+
+s3:
+  bucket: "flowzero"
+  region: "us-west-2"
+  max_pool_connections: 50
+  retry_attempts: 3
+
+downloads:
+  chunk_size: 8388608  # 8MB
+  max_concurrent_downloads: 10
+  timeout: 120
+  retry_attempts: 3
+
+storage:
+  database_path: "flowzero.db"
+  cache_dir: ".cache"
+  cache_ttl: 3600
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_retention_days: 30

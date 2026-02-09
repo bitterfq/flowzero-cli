@@ -1,509 +1,750 @@
 # FlowZero Orders CLI
 
-A command-line tool for ordering Planet Labs satellite imagery to support water detection and river monitoring workflows.
+**Modern command-line tool for ordering Planet Labs satellite imagery for river monitoring workflows**
 
-## Overview
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This CLI streamlines the process of:
-- Creating Areas of Interest (AOIs) for river monitoring
-- Ordering PlanetScope imagery with automatic scene selection
-- Ordering Planet Basemap composites
-- Batch ordering multiple AOIs with per-gage date ranges
-- Checking order status and downloading completed orders
-- Uploading to S3 or saving locally with quota tracking
+---
 
-**Key Features:**
-- **Automatic pagination handling** - Fetches all scenes across multiple API pages automatically
-- **Smart download-once** - Skips files that already exist (S3 or local)
-- **Quota tracking** - Shows scenes found vs selected and total quota impact
-- **Flexible output** - Download to S3 or local directory
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Commands](#commands)
+  - [Database Queries](#database-queries)
+  - [Order Submission](#order-submission)
+  - [Status Checking & Downloads](#status-checking--downloads)
+  - [AOI Management](#aoi-management)
+  - [Basemap Operations](#basemap-operations)
+- [Workflows](#workflows)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
+- [Migration from Old CLI](#migration-from-old-cli)
+
+---
+
+## Quick Start
+
+```bash
+# Install
+git clone <repository-url>
+cd flowzero-orders-cli
+pip install -e .
+
+# Set up credentials
+export PL_API_KEY="your_planet_api_key"
+export AWS_ACCESS_KEY_ID="your_aws_key"
+export AWS_SECRET_ACCESS_KEY="your_aws_secret"
+
+# Submit an order
+flowzero submit \
+  --geojson ./my_aoi.geojson \
+  --start-date 2024-01-01 \
+  --end-date 2024-06-30 \
+  --cadence weekly
+
+# Check status and download
+flowzero check-order-status <order_id> --use-s5cmd
+```
+
+---
+
+## Features
+
+### Core Capabilities
+- **Automated Scene Selection** - Smart selection by cadence (daily/weekly/monthly)
+- **Coverage Filtering** - Ensures ≥98% AOI coverage and 0% cloud cover
+- **Batch Operations** - Submit and monitor multiple orders simultaneously
+- **Database Tracking** - SQLite database for order history and status
+- **Duplicate Prevention** - Check for existing orders before submitting
+- **Flexible Output** - Download to S3 or local filesystem
+
+### Performance & Reliability
+- **Parallel Downloads** - 10-25x faster than sequential (ThreadPoolExecutor)
+- **s5cmd Support** - 20-50x faster S3 uploads with Go-based tool
+- **Skip Existing Files** - Automatic detection and skip of already-downloaded files
+- **Retry Logic** - Exponential backoff for Planet API calls
+- **Automatic Pagination** - Handles large result sets transparently
+
+### Developer Experience
+- **Modular Architecture** - Clean separation of concerns
+- **Comprehensive Configuration** - Centralized config.yaml
+- **Rich Console Output** - Color-coded status and progress
+- **Simple CLI** - Just `flowzero <command>` - no verbose Python module syntax
+
+---
 
 ## Installation
 
 ### Prerequisites
-- Python 3.8+
-- Planet Labs API key
-- AWS credentials (for S3 uploads)
+- **Python 3.8+** (check with `python --version`)
+- **Planet Labs API Key** ([get one here](https://www.planet.com/account/))
+- **AWS Credentials** (for S3 uploads) ([setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html))
+- **s5cmd** (optional, for ultra-fast S3 uploads) ([install guide](https://github.com/peak/s5cmd))
 
-### Setup
+### Install Steps
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd flowzero-orders-cli
-```
+1. **Clone the repository:**
+   ```bash
+   git clone <repository-url>
+   cd flowzero-orders-cli
+   ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+2. **Install the package:**
+   ```bash
+   pip install -e .
+   ```
 
-3. Create a `.env` file with your credentials:
-```env
-PL_API_KEY=your_planet_api_key
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-```
+   This installs FlowZero in editable mode and creates the `flowzero` command.
+
+3. **Verify installation:**
+   ```bash
+   flowzero --version
+   # Should output: flowzero, version 2.0.0
+   ```
+
+4. **Set up credentials:**
+
+   Create a `.env` file in the project root:
+   ```env
+   PL_API_KEY=your_planet_labs_api_key_here
+   AWS_ACCESS_KEY_ID=your_aws_access_key
+   AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+   ```
+
+   Or export environment variables:
+   ```bash
+   export PL_API_KEY="your_key"
+   export AWS_ACCESS_KEY_ID="your_key"
+   export AWS_SECRET_ACCESS_KEY="your_secret"
+   ```
+
+5. **Test the installation:**
+   ```bash
+   flowzero db stats
+   # Should show database statistics (may be empty if new install)
+   ```
+
+---
+
+## Configuration
+
+All settings are in `config.yaml`. You can customize:
+
+- **API URLs and timeouts**
+- **S3 bucket name and region**
+- **Download concurrency** (max_workers)
+- **Coverage thresholds** (min_coverage_pct)
+- **Cloud cover limits**
+- **Database path**
+
+Environment variables override config for secrets:
+- `PL_API_KEY` - Planet API key
+- `AWS_ACCESS_KEY_ID` - AWS access key
+- `AWS_SECRET_ACCESS_KEY` - AWS secret key
+
+---
 
 ## Commands
 
-### `generate-aoi`
-Launch an interactive web interface to draw and save AOIs.
+### Database Queries
+
+View and query your order history stored in SQLite:
+
+#### `flowzero db stats`
+Show database statistics (total orders, batches, AOIs, scenes, quota).
 
 ```bash
-python main.py generate-aoi
+flowzero db stats
 ```
-Opens a browser at `http://localhost:5000` with a map interface for drawing polygons.
+
+#### `flowzero db list-batches`
+List all batch IDs with order counts.
+
+```bash
+flowzero db list-batches
+```
+
+#### `flowzero db list-orders`
+List orders with optional filters.
+
+```bash
+# All orders
+flowzero db list-orders
+
+# Filter by AOI
+flowzero db list-orders --aoi SalinasRiver
+
+# Filter by status
+flowzero db list-orders --status success
+
+# Filter by batch
+flowzero db list-orders --batch-id <batch_id>
+```
+
+#### `flowzero db pending`
+Show all pending orders (queued or running).
+
+```bash
+flowzero db pending
+```
+
+#### `flowzero db get <order_id>`
+Get detailed information for a specific order.
+
+```bash
+flowzero db get abc123-def456-...
+```
 
 ---
 
-### `convert-shp`
-Convert a Shapefile to GeoJSON format.
+### Order Submission
+
+#### `flowzero submit`
+Submit a single PlanetScope order.
 
 ```bash
-python main.py convert-shp --shp path/to/shapefile.shp --output ./geojsons
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--shp` | required | Path to input Shapefile |
-| `--output` | `./geojsons` | Output directory for GeoJSON |
-
----
-
-### `submit`
-Submit a single PlanetScope imagery order for one AOI and date range.
-
-```bash
-python main.py submit \
-  --geojson ./geojsons/my_aoi.geojson \
+flowzero submit \
+  --geojson ./my_aoi.geojson \
   --start-date 2024-01-01 \
   --end-date 2024-06-30 \
-  --cadence weekly
+  --cadence weekly \
+  --skip-if-exists
 ```
+
+**Options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--geojson` | required | Path to AOI GeoJSON file |
 | `--start-date` | required | Start date (YYYY-MM-DD) |
 | `--end-date` | required | End date (YYYY-MM-DD) |
-| `--num-bands` | `four_bands` | `four_bands` or `eight_bands` |
 | `--cadence` | `weekly` | Scene selection: `daily`, `weekly`, or `monthly` |
-| `--bundle` | auto | Override product bundle name |
-| `--api-key` | env var | Planet API key |
+| `--skip-if-exists` | false | Skip if identical order already exists in database |
+| `--cloud-cover` | 0 | Max cloud cover percentage (0-100) |
+| `--min-coverage` | 98 | Min AOI coverage percentage (0-100) |
+| `--api-key` | env var | Planet API key override |
 
-**Scene Selection Logic:**
-- Filters for 0% cloud cover
-- Requires ≥98% AOI coverage
-- Selects best scene per cadence interval
+**Example Output:**
+```
+AOI area: 12.34 sq km
+Found 156 scenes matching criteria
+Selected 26 best scenes (weekly cadence)
+2024-01-07 | ID: 20240107_123456_1234 | Coverage: 99.8%
+2024-01-14 | ID: 20240114_789012_5678 | Coverage: 99.5%
+...
+
+Order submitted successfully!
+Order ID: abc123-def456-789012-ghi345
+```
 
 ---
 
-### `batch-submit`
-Submit multiple PlanetScope orders from a single shapefile containing multiple AOIs with per-gage date ranges. Shows quota usage per order and in the summary.
+#### `flowzero batch-submit`
+Submit multiple orders from a shapefile.
 
 ```bash
-python main.py batch-submit \
-  --shp ./gages_with_dates.shp \
-  --gage-id-col "GageID" \
-  --start-date-col "StartDate" \
-  --end-date-col "EndDate" \
-  --cadence weekly
+flowzero batch-submit \
+  --shp ./gages.shp \
+  --gage-id-col GageID \
+  --start-date-col StartDate \
+  --end-date-col EndDate \
+  --cadence weekly \
+  --skip-existing \
+  --dry-run
 ```
+
+**Options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--shp` | required | Path to Shapefile with AOIs and attributes |
-| `--gage-id-col` | `gage_id` | Column name for gage identifier |
+| `--shp` | required | Path to shapefile with AOIs and attributes |
+| `--gage-id-col` | `gage_id` | Column name for unique identifier |
 | `--start-date-col` | `start_date` | Column name for start date |
 | `--end-date-col` | `end_date` | Column name for end date |
-| `--num-bands` | `four_bands` | `four_bands` or `eight_bands` |
-| `--cadence` | `weekly` | Scene selection: `daily`, `weekly`, or `monthly` |
-| `--max-months` | `6` | Maximum months per order (auto-subdivides longer ranges) |
-| `--bundle` | auto | Override product bundle name |
+| `--cadence` | `weekly` | `daily`, `weekly`, or `monthly` |
+| `--skip-existing` | false | Skip AOIs with completed orders |
 | `--dry-run` | false | Preview orders without submitting |
-| `--api-key` | env var | Planet API key |
+| `--max-months` | 6 | Max months per order (auto-subdivides) |
 
 **Required Shapefile Columns:**
-- Geometry column with AOI polygons
-- Gage ID column (unique identifier)
-- Start date column (YYYY-MM-DD format)
-- End date column (YYYY-MM-DD format)
+- Geometry (polygon)
+- Gage ID (unique identifier)
+- Start date (YYYY-MM-DD)
+- End date (YYYY-MM-DD)
 
-**Automatic Date Subdivision:**
-Date ranges longer than `--max-months` (default 6) are automatically split into multiple orders. For example, a 2-year date range becomes four 6-month orders.
-
-**Automatic Pagination Handling:**
-The CLI automatically handles Planet API pagination, fetching all available scenes across multiple pages. You no longer need to worry about the 250-item per-page limit - the tool will fetch all matching scenes automatically.
-
-**Example Output with Quota Tracking:**
+**Example Output:**
 ```
-📂 Loaded shapefile with 5 features
-Columns: gage_id, start_date, end_date, geometry
+Found 25 features in shapefile
+Prepared 38 orders from 25 gages
 
-📋 Prepared 8 orders from 5 gages
+Batch ID: abc123-def4-5678-9012-34567890abcd
 
-📦 Batch ID: abc123-def4-5678-9012-34567890abcd
-
-[✅] Using 4-band surface reflectance: ortho_analytic_4b_sr
-
-Processing orders...
-
-[1/8] Gage_001: 2024-01-01 to 2024-06-30... ✓ Order a1b2c3d4... (45 found, 23 selected, 1,840 ha quota)
-[2/8] Gage_001: 2024-07-01 to 2024-12-31... ✓ Order e5f6g7h8... (38 found, 19 selected, 1,520 ha quota)
-[3/8] Gage_002: 2024-01-01 to 2024-06-30... ✓ Order i9j0k1l2... (42 found, 21 selected, 1,680 ha quota)
+[1/38] Gage_001: 2024-01-01 to 2024-06-30... ✓ Order a1b2c3d4... (45 found, 23 selected)
+[2/38] Gage_002: 2024-01-01 to 2024-06-30... ✓ Order e5f6g7h8... (38 found, 19 selected)
 ...
 
-============================================================
-📊 Batch Order Summary
-============================================================
-Submitted: 7 orders (315 found, 152 selected, 12,160 ha quota)
-No valid scenes: 1 orders
-  - Gage_004: 2024-06-01 to 2024-08-31
+Batch Order Summary
+===================
+Submitted: 35 orders (1,234 found, 567 selected, 45,600 ha quota)
+No valid scenes: 3 orders
 
-🎉 Successfully submitted 7 orders!
-📈 Total: 315 found, 152 selected, 12,160 hectares of quota
-📦 Batch ID: abc123-def4-5678-9012-34567890abcd
+Successfully submitted 35 orders!
+Batch ID: abc123-def4-5678-9012-34567890abcd
 ```
 
 ---
 
-### `search-scenes`
-Search for available PlanetScope scenes without placing an order.
+#### `flowzero search-scenes`
+Search for scenes without ordering (preview).
 
 ```bash
-python main.py search-scenes \
-  --geojson ./geojsons/my_aoi.geojson \
+flowzero search-scenes \
+  --geojson ./my_aoi.geojson \
   --start-date 2024-01-01 \
   --end-date 2024-03-31 \
   --cadence weekly
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--geojson` | required | Path to AOI GeoJSON |
-| `--start-date` | required | Start date (YYYY-MM-DD) |
-| `--end-date` | required | End date (YYYY-MM-DD) |
-| `--cadence` | `weekly` | `daily`, `weekly`, or `monthly` |
-| `--num-bands` | `four_bands` | `four_bands` or `eight_bands` |
-| `--bundle` | auto | Override product bundle name |
-| `--api-key` | env var | Planet API key |
+Displays available scenes, coverage, and quota estimate without submitting an order.
 
 ---
 
-### `list-basemaps`
-List available Planet Basemap mosaics within a date range.
+### Status Checking & Downloads
+
+#### `flowzero check-order-status <order_id>`
+Check status and download files for a single order.
 
 ```bash
-python main.py list-basemaps --start-date 2024-01-01 --end-date 2024-12-31
+# Download to S3 (default)
+flowzero check-order-status abc123-def456-... --use-s5cmd
+
+# Download to local directory
+flowzero check-order-status abc123-def456-... --output ./downloads
+
+# Re-download existing files
+flowzero check-order-status abc123-def456-... --overwrite
 ```
+
+**Options:**
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--start-date` | required | Start date (YYYY-MM-DD) |
-| `--end-date` | required | End date (YYYY-MM-DD) |
-| `--api-key` | env var | Planet API key |
+| `--output` | `s3` | Output: `s3` or local directory path |
+| `--overwrite` | false | Re-download even if files exist |
+| `--use-s5cmd` | false | Use s5cmd for ultra-fast S3 uploads |
+| `--api-key` | env var | Planet API key override |
 
----
+**How it works:**
 
-### `order-basemap`
-Order a Planet Basemap composite for an AOI.
+1. Queries database for order metadata
+2. Checks Planet API for current status
+3. Updates database with new status
+4. For `success` or `partial` orders:
+   - Downloads all files (parallel or s5cmd)
+   - Organizes by week (PSScope) or date (Basemap)
+   - Skips files that already exist (unless `--overwrite`)
+   - Uploads to S3 or saves locally
+   - Saves metadata
 
-```bash
-python main.py order-basemap \
-  --mosaic-name global_monthly_2024_06_mosaic \
-  --geojson ./geojsons/my_aoi.geojson
-```
+**Order States:**
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--mosaic-name` | required | Mosaic name from `list-basemaps` |
-| `--geojson` | required | Path to AOI GeoJSON |
-| `--api-key` | env var | Planet API key |
-
----
-
-### `check-order-status`
-Check a single order's status and upload completed files to S3.
-
-```bash
-python main.py check-order-status <order_id>
-```
-
-When an order is complete (`success` state), this command:
-1. Downloads all imagery files
-2. Organizes by date/week
-3. Uploads to S3 bucket `flowzero`
-4. Saves order metadata
-
----
-
-### `batch-check-status`
-Check status and download all orders in a batch. Supports both S3 and local output, with smart download-once behavior.
-
-```bash
-python main.py batch-check-status <batch_id> --api-key API_KEY
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `batch_id` | required | Batch ID from batch-submit output |
-| `--api-key` | env var | Planet API Key |
-| `--overwrite` | false | Re-download even if files already exist |
-| `--output` | `s3` | Output location: `s3` or local directory path |
-
-**Key Features:**
-- **Download-once**: Checks if files already exist in S3 or locally before downloading
-- **Local or S3 output**: Use `--output ./downloads` to save locally instead of S3
-- **Overwrite mode**: Use `--overwrite` to force re-download of all files
-- **Full order state handling**: Properly handles all Planet API order states (see below)
-
-**Planet API Order States:**
 | State | Behavior |
 |-------|----------|
-| `queued` | Order is waiting in queue - try again later |
-| `running` | Order is processing - try again later |
+| `queued` | Wait - order in queue |
+| `running` | Wait - order processing |
 | `success` | Download all files |
-| `partial` | Download available files, warn about missing ones |
-| `failed` | Log error with hints from Planet, skip order |
-| `cancelled` | Log as cancelled, skip order |
+| `partial` | Download available files |
+| `failed` | Show error, do not download |
+| `cancelled` | Show status, do not download |
 
-**Example Usage:**
+---
+
+#### `flowzero batch-check-status <batch_id>`
+Check status and download all orders in a batch.
+
 ```bash
-# Default: Check status and upload to S3, skip files that already exist
-python main.py batch-check-status abc123-def4-5678-... --api-key API_KEY
+# Check all orders in batch (skip already completed)
+flowzero batch-check-status abc123-def4-5678-... --use-s5cmd
 
-# Force re-download even if files already exist
-python main.py batch-check-status abc123-def4-5678-... --api-key API_KEY --overwrite
+# Force recheck all orders (even completed ones)
+flowzero batch-check-status abc123-def4-5678-... --force
 
-# Download to local directory instead of S3
-python main.py batch-check-status abc123-def4-5678-... --api-key API_KEY --output ./downloads
-
-# Combine options: local download with overwrite
-python main.py batch-check-status abc123-def4-5678-... --output ./downloads --overwrite
+# Download to local directory
+flowzero batch-check-status abc123-def4-5678-... --output ./downloads
 ```
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--output` | `s3` | Output: `s3` or local directory path |
+| `--overwrite` | false | Re-download even if files exist |
+| `--force` | false | Recheck all orders (even completed) |
+| `--use-s5cmd` | false | Use s5cmd for ultra-fast uploads |
+| `--api-key` | env var | Planet API key override |
 
 **Example Output:**
 ```
-📦 Found 7 orders in batch: abc123-def4-5678-...
+Found 35 orders in batch: abc123-def4-5678-...
 
-[1/7] Checking 08279500 (2022-01-01 to 2022-06-30)...
-  Order ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
-  [✅] Status: success
-  [🔍] Processing PSScope Order - Organizing by week...
-  [✅] Found 23 images across 23 weeks
-  [⬆️] Uploading: 20220115_abc123.tif -> s3://flowzero/planetscope analytic/four_bands/08279500/2022_01_15_abc123.tiff
-  [✅] Saved successfully
-  [⏭️] Skipping (exists): s3://flowzero/planetscope analytic/four_bands/08279500/2022_01_22_def456.tiff
+[1/35] Checking Gage_001 (2024-01-01 to 2024-06-30)...
+  Order ID: a1b2c3d4...
+  Status: success
+  Downloading...
+  Processing PlanetScope Order - Organizing by week...
+  Found 23 images across 23 weeks
+  Downloading 23 files with s5cmd...
+  Downloaded: s3://flowzero/.../2024_01_07_abc123.tiff
+  Skipped (exists): s3://flowzero/.../2024_01_14_def456.tiff
   ...
-  [✅] Metadata saved to S3
-  [🎉] Order complete!
+  Download complete!
 
-[2/7] Checking 08279000 (2022-01-01 to 2022-06-30)...
-  Order ID: b2c3d4e5-f6g7-8901-bcde-f23456789012
-  [✅] Status: partial
-  [⚠️] Order is partial - some files may have failed. Downloading available files...
-  [🔍] Processing PSScope Order - Organizing by week...
-  [✅] Found 15 images across 15 weeks
-  [⬆️] Uploading: 20220108_xyz789.tif -> s3://flowzero/...
-  ...
-  [⚠️] Partial order downloaded (some files may be missing)!
+[2/35] Checking Gage_002 (2024-01-01 to 2024-06-30)...
+  Order ID: b2c3d4e5...
+  Status: pending
+  Order is running - try again later.
 
-[3/7] Checking 08279100 (2022-01-01 to 2022-06-30)...
-  Order ID: c3d4e5f6-g7h8-9012-cdef-g34567890123
-  [✅] Status: success
-  [🔍] Processing PSScope Order - Organizing by week...
-  [✅] Found 19 images across 19 weeks
-  [⏭️] Skipping (exists): s3://flowzero/planetscope analytic/four_bands/08279100/2022_01_08_abc123.tiff
-  ... (all files already exist)
-  [🎉] Order complete!
+...
 
-============================================================
-📊 Batch Status Check Summary
-============================================================
-✅ Completed & Downloaded: 4
-⚠️ Partial (downloaded available files): 1
-    - 08279000 (b2c3d4e5...)
-⏳ Pending (queued/running): 1
-    - 08279200 (running)
-❌ Failed (on Planet's side): 1
-    - 08279300: Asset not available for scene
+Batch Status Check Summary
+==========================
+Completed & Downloaded: 28
+Pending (queued/running): 5
+Failed: 2
 
-💡 Run again later to check pending orders (queued/running).
-⚠️ 1 partial order(s) had some files that couldn't be processed by Planet.
-❌ 1 order(s) failed or were cancelled - these will not complete.
+Run again later to check pending orders.
 ```
 
 ---
 
-## Workflow Examples
+### AOI Management
 
-### Single AOI Order
+#### `flowzero generate-aoi`
+Launch interactive web interface for drawing AOIs.
+
 ```bash
-# 1. Convert shapefile to GeoJSON
-python main.py convert-shp --shp ./AOI_Shapefiles/MyRiver/MyRiver.shp
-
-# 2. Search for available scenes (optional)
-python main.py search-scenes --geojson ./geojsons/MyRiver.geojson \
-  --start-date 2024-01-01 --end-date 2024-06-30
-
-# 3. Submit order
-python main.py submit --geojson ./geojsons/MyRiver.geojson \
-  --start-date 2024-01-01 --end-date 2024-06-30
-
-# 4. Check status and download
-python main.py check-order-status <order_id>
+flowzero generate-aoi
 ```
 
-### Batch Order (Multiple Gages)
+Opens browser at http://localhost:5000 with map interface for drawing polygons and saving as GeoJSON.
+
+---
+
+#### `flowzero convert-shp`
+Convert shapefile to GeoJSON.
+
+```bash
+flowzero convert-shp --shp ./shapefile.shp --output ./geojsons
+```
+
+Handles CRS transformation (reprojects to EPSG:4326 if needed).
+
+---
+
+### Basemap Operations
+
+#### `flowzero list-basemaps`
+List available Planet Basemap mosaics.
+
+```bash
+flowzero list-basemaps \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31
+```
+
+---
+
+#### `flowzero order-basemap`
+Order a basemap composite.
+
+```bash
+flowzero order-basemap \
+  --mosaic-name global_monthly_2024_06_mosaic \
+  --geojson ./my_aoi.geojson
+```
+
+---
+
+## Workflows
+
+### Workflow 1: Single Order
+
+```bash
+# 1. Convert shapefile to GeoJSON (if needed)
+flowzero convert-shp --shp ./river.shp
+
+# 2. Preview available scenes (optional)
+flowzero search-scenes \
+  --geojson ./geojsons/river.geojson \
+  --start-date 2024-01-01 \
+  --end-date 2024-06-30
+
+# 3. Submit order
+flowzero submit \
+  --geojson ./geojsons/river.geojson \
+  --start-date 2024-01-01 \
+  --end-date 2024-06-30 \
+  --cadence weekly
+
+# 4. Check status (wait until complete)
+flowzero check-order-status <order_id> --use-s5cmd
+```
+
+---
+
+### Workflow 2: Batch Orders
+
 ```bash
 # 1. Prepare shapefile with columns: gage_id, start_date, end_date, geometry
 
-# 2. Preview orders (dry run) - shows quota impact
-python main.py batch-submit --shp ./all_gages.shp --dry-run
+# 2. Dry run to preview
+flowzero batch-submit --shp ./gages.shp --dry-run
 
 # 3. Submit all orders
-python main.py batch-submit --shp ./all_gages.shp
-# Note the Batch ID in the output!
+flowzero batch-submit --shp ./gages.shp
+# IMPORTANT: Note the Batch ID from output!
 
-# 4. Check all orders in batch and download to S3
-python main.py batch-check-status <batch_id> --api-key API_KEY
+# 4. Check batch status (run periodically until all complete)
+flowzero batch-check-status <batch_id> --use-s5cmd
 
-# 5. Later, check again (will skip already-downloaded orders)
-python main.py batch-check-status <batch_id> --api-key API_KEY
+# 5. Later, check again (will skip completed orders)
+flowzero batch-check-status <batch_id> --use-s5cmd
 
-# Or download to local directory instead
-python main.py batch-check-status <batch_id> --output ./planet_imagery
+# 6. Force recheck all orders
+flowzero batch-check-status <batch_id> --force
 ```
 
 ---
 
-## Project Structure
+### Workflow 3: Query Order History
+
+```bash
+# See all batches
+flowzero db list-batches
+
+# See all orders in a batch
+flowzero db list-orders --batch-id <batch_id>
+
+# See all successful orders
+flowzero db list-orders --status success
+
+# See orders for specific AOI
+flowzero db list-orders --aoi SalinasRiver
+
+# See pending orders
+flowzero db pending
+
+# Get details for specific order
+flowzero db get <order_id>
+```
+
+---
+
+## Architecture
+
+### Project Structure
 
 ```
 flowzero-orders-cli/
-├── main.py              # CLI entry point and commands
-├── generate_aoi.py      # Flask app for interactive AOI creation
-├── requirements.txt     # Python dependencies
-├── orders.json          # Log of all submitted orders
-├── .env                 # Environment variables (not in repo)
-├── AOI Shapefiles/      # Input shapefiles
-│   ├── Salinas/
-│   ├── SantaClara/
-│   └── ...
-└── geojsons/            # Converted GeoJSON files
-    ├── DrySpy_AOI_SalinasRiver.geojson
-    └── ...
+├── flowzero/
+│   ├── api/               # Planet API & S3 clients
+│   ├── cli/               # Click CLI commands
+│   ├── models/            # Data models (Order, Scene)
+│   ├── storage/           # SQLite database layer
+│   ├── downloaders/       # Parallel & s5cmd downloaders
+│   └── utils/             # Utilities (geometry, dates)
+├── config.yaml            # Configuration
+├── setup.py               # Package setup
+├── pyproject.toml         # Modern Python config
+└── generate_aoi.py        # AOI generation server
 ```
 
----
+### Data Flow
 
-## Order Logging
+1. **Order Submission:**
+   - User runs `flowzero submit`
+   - Database checks for duplicates
+   - Planet API searches for scenes
+   - Scenes filtered by coverage/cadence
+   - Order submitted to Planet
+   - Order saved to database
 
-All orders are logged to `orders.json` with metadata:
-```json
-{
-  "order_id": "abc123...",
-  "aoi_name": "SalinasRiver",
-  "order_type": "PSScope",
-  "start_date": "2024-01-01",
-  "end_date": "2024-06-30",
-  "num_bands": "four_bands",
-  "product_bundle": "analytic_sr_udm2",
-  "aoi_area_sqkm": 8.5,
-  "scenes_selected": 23,
-  "batch_order": true,
-  "batch_id": "abc123-def4-5678-9012-34567890abcd",
-  "timestamp": "2024-12-15T10:30:00"
-}
-```
+2. **Status Check:**
+   - User runs `flowzero check-order-status`
+   - Database retrieves order metadata
+   - Planet API queried for status
+   - Database updated with new status
+   - If complete: parallel/s5cmd download
+   - Files uploaded to S3 or saved locally
 
----
+### Database Schema
 
-## S3 Output Structure
+SQLite database (`orders.db`) with indexed queries:
 
-Completed orders are uploaded to S3 with this structure:
-```
-s3://flowzero/
-├── planetscope analytic/
-│   └── four_bands/
-│       └── {aoi_name}/
-│           ├── 2024_01_15_{scene_id}.tiff
-│           ├── 2024_01_22_{scene_id}.tiff
-│           └── metadata.json
-└── basemaps/
-    └── {aoi_name}/
-        └── {year}_{month}/
-            └── *.tiff
-```
-
-## Local Output Structure
-
-When using `--output ./downloads`:
-```
-./downloads/
-├── planetscope analytic/
-│   └── four_bands/
-│       └── {aoi_name}/
-│           ├── 2024_01_15_{scene_id}.tiff
-│           ├── 2024_01_22_{scene_id}.tiff
-│           └── metadata.json
-└── basemaps/
-    └── {aoi_name}/
-        └── {year}_{month}/
-            └── *.tiff
-```
-
----
-
-## Quota Tracking
-
-The CLI tracks and displays quota usage to help manage your Planet subscription:
-
-- **Per-order**: Shows scenes found, scenes selected, and hectares for each order submitted
-- **Batch summary**: Shows total scenes found, total scenes selected, and total hectares across all orders
-- **Calculation**: `quota_hectares = aoi_area_sqkm × scenes_selected × 100`
-
-**Scene Counts Explained:**
-- **Found**: Total scenes returned by Planet API (after cloud cover filtering)
-- **Selected**: Final scenes selected after coverage filtering (≥98%) and cadence selection
-
-Example output:
-```
-[1/7] 08279500: 2022-01-01 to 2022-06-30... ✓ Order a1b2c3d4... (45 found, 23 selected, 1,955 ha quota)
-...
-📈 Total: 315 found, 152 selected, 12,920 hectares of quota
+```sql
+CREATE TABLE orders (
+    order_id TEXT PRIMARY KEY,
+    aoi_name TEXT NOT NULL,
+    order_type TEXT NOT NULL,
+    batch_id TEXT,
+    status TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    scenes_selected INTEGER,
+    quota_hectares REAL,
+    timestamp TEXT,
+    mosaic_name TEXT
+);
+-- Indexes on: batch_id, aoi_name, status, timestamp
 ```
 
 ---
 
 ## Troubleshooting
 
-### "No cloud-free scenes found"
-- Try expanding your date range
-- Check if the AOI has frequent cloud cover during that period
+### Command not found: flowzero
 
-### "No full-coverage scenes matched filter"
-- Your AOI may be too large for single-scene coverage
-- Consider splitting into smaller AOIs
+```bash
+# Check if installed
+pip show flowzero-orders-cli
 
-### Date range subdivision
-- Orders are limited to 6 months by default for organizational purposes
-- The CLI automatically handles pagination, so you can use larger date ranges if needed
-- However, smaller date ranges (3-6 months) are still recommended for better organization and faster processing
+# Reinstall
+pip uninstall flowzero-orders-cli
+pip install -e .
 
-### Automatic Pagination
-- The CLI automatically fetches all scenes across multiple API pages
-- No manual intervention needed - pagination is handled transparently
-- Large date ranges may take longer to process as more pages are fetched
-
-### "Skipping (exists)" messages
-- Files that already exist in the output location (S3 or local) are skipped
-- This prevents duplicate downloads and saves time/bandwidth
-- Use `--overwrite` flag to force re-download of all files
+# Verify
+which flowzero
+flowzero --version
+```
 
 ---
 
-## License
+### Import errors
 
-[Add license information]
+```bash
+# Install all dependencies
+pip install -r requirements.txt
+
+# Check Python version (requires 3.8+)
+python --version
+```
+
+---
+
+### Database errors
+
+```bash
+# Check database location (default: ./orders.db)
+ls -la orders.db
+
+# Reset database (WARNING: deletes all data)
+rm orders.db
+# Database will be recreated on next command
+```
+
+---
+
+### API errors
+
+```bash
+# Check API key is set
+echo $PL_API_KEY
+
+# Test API connectivity
+flowzero search-scenes \
+  --geojson test.geojson \
+  --start-date 2024-01-01 \
+  --end-date 2024-01-31
+```
+
+---
+
+### s5cmd not available
+
+```bash
+# Install s5cmd (option 1: download binary)
+# https://github.com/peak/s5cmd/releases
+
+# Install s5cmd (option 2: with go)
+go install github.com/peak/s5cmd/v2@latest
+
+# Verify
+which s5cmd
+s5cmd version
+
+# Note: CLI automatically falls back to parallel downloader if s5cmd not found
+```
+
+---
+
+### "No cloud-free scenes found"
+
+- Expand date range
+- Check if AOI has frequent cloud cover
+- Try different cadence (daily instead of weekly)
+
+---
+
+### "No full-coverage scenes matched filter"
+
+- AOI may be too large for single-scene coverage
+- Lower `--min-coverage` threshold (default 98%)
+- Split into smaller AOIs
+
+---
+
+## Migration from Old CLI
+
+If you have existing data in `orders.json` from the old `main.py` CLI:
+
+```bash
+# Run migration script
+python scripts/migrate_json_to_db.py
+
+# Verify migration
+flowzero db stats
+flowzero db list-orders
+```
+
+The old `main.py` CLI still works and can run side-by-side, but:
+- Old CLI uses `orders.json` (JSON file)
+- New CLI uses `orders.db` (SQLite database)
+- Data is not shared between them
+
+---
+
+## Output Structure
+
+### S3 Structure
+
+```
+s3://flowzero/
+├── planetscope analytic/
+│   └── four_bands/
+│       └── {aoi_name}/
+│           ├── 2024_01_07_{scene_id}.tiff
+│           ├── 2024_01_14_{scene_id}.tiff
+│           └── metadata.json
+└── basemaps/
+    └── {aoi_name}/
+        └── {year}_{month}/
+            ├── tile_001.tiff
+            └── metadata.json
+```
+
+### Local Structure
+
+```
+./downloads/
+├── planetscope analytic/
+│   └── four_bands/
+│       └── {aoi_name}/
+│           ├── 2024_01_07_{scene_id}.tiff
+│           └── ...
+└── basemaps/
+    └── {aoi_name}/
+        └── ...
